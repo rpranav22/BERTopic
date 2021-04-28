@@ -1317,8 +1317,9 @@ class BERTopic:
         return mapped_predictions
 
     def _reduce_dimensionality(self,
-                               embeddings: Union[np.ndarray, csr_matrix],
-                               y: Union[List[int], np.ndarray] = None) -> np.ndarray:
+                               embeddings: np.ndarray = None,
+                               y: Union[List[int], np.ndarray] = None) -> Tuple[List[int],
+                                                                       Union[np.ndarray, None]]:
         """ Reduce dimensionality of embeddings using UMAP and train a UMAP model
 
         Arguments:
