@@ -226,7 +226,7 @@ class BERTopic:
                       documents: List[str],
                       embeddings: np.ndarray = None,
                       y: Union[List[int], np.ndarray] = None) -> Tuple[List[int],
-                                                                       Union[np.ndarray, None]]:
+                                                                       Union[np.ndarray, None]], List[int]:
         """ Fit the models on a collection of documents, generate topics, and return the docs with topics
 
         Arguments:
