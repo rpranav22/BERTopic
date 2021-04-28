@@ -224,8 +224,9 @@ class BERTopic:
 
     def fit_transform(self,
                       documents: List[str],
-                      embeddings: np.ndarray = None) -> Tuple[List[int],
-                                                              Union[np.ndarray, None], List[int]]:
+                      embeddings: np.ndarray = None,
+                      y: Union[List[int], np.ndarray] = None) -> Tuple[List[int],
+                                                                       Union[np.ndarray, None]]:
         """ Fit the models on a collection of documents, generate topics, and return the docs with topics
 
         Arguments:
@@ -1317,9 +1318,8 @@ class BERTopic:
         return mapped_predictions
 
     def _reduce_dimensionality(self,
-                               embeddings: np.ndarray = None,
-                               y: Union[List[int], np.ndarray] = None) -> Tuple[List[int],
-                                                                       Union[np.ndarray, None]]:
+                               embeddings: Union[np.ndarray, csr_matrix],
+                               y: Union[List[int], np.ndarray] = None) -> np.ndarray:
         """ Reduce dimensionality of embeddings using UMAP and train a UMAP model
 
         Arguments:
