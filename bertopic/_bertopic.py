@@ -1,7 +1,14 @@
+
 import math
+import yaml
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
+
+try:
+    yaml._warnings_enabled["YAMLLoadWarning"] = False
+except (KeyError, AttributeError, TypeError) as e:
+    pass
 
 import re
 import joblib
@@ -20,16 +27,16 @@ from sentence_transformers import SentenceTransformer
 from umap import UMAP
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.preprocessing import MinMaxScaler, normalize
+from sklearn.preprocessing import normalize
 
 # BERTopic
 from bertopic._ctfidf import ClassTFIDF
 from bertopic._utils import MyLogger, check_documents_type, check_embeddings_shape, check_is_fitted
 from bertopic._mmr import mmr
 from bertopic.backend._utils import select_backend
+from bertopic import plotting
 
 # Visualization
-import plotly.express as px
 import plotly.graph_objects as go
 
 logger = MyLogger("WARNING")
@@ -47,7 +54,7 @@ class BERTopic:
     from sklearn.datasets import fetch_20newsgroups
 
     docs = fetch_20newsgroups(subset='all')['data']
-    topic_model = BERTopic(calculate_probabilities=True)
+    topic_model = BERTopic()
     topics, probabilities = topic_model.fit_transform(docs)
     ```
 
@@ -59,7 +66,7 @@ class BERTopic:
     from sentence_transformers import SentenceTransformer
 
     docs = fetch_20newsgroups(subset='all')['data']
-    sentence_model = SentenceTransformer("distilbert-base-nli-mean-tokens")
+    sentence_model = SentenceTransformer("all-MiniLM-L6-v2")
     topic_model = BERTopic(embedding_model=sentence_model)
     ```
 
@@ -76,7 +83,8 @@ class BERTopic:
                  nr_topics: Union[int, str] = None,
                  low_memory: bool = False,
                  calculate_probabilities: bool = False,
-                 embedding_model = None,
+                 seed_topic_list: List[List[str]] = None,
+                 embedding_model=None,
                  umap_model: UMAP = None,
                  hdbscan_model: hdbscan.HDBSCAN = None,
                  vectorizer_model: CountVectorizer = None,
@@ -88,7 +96,9 @@ class BERTopic:
             language: The main language used in your documents. For a full overview of
                       supported languages see bertopic.backends.languages. Select
                       "multilingual" to load in a sentence-tranformers model that supports 50+ languages.
-            top_n_words: The number of words per topic to extract
+            top_n_words: The number of words per topic to extract. Setting this
+                         too high can negatively impact topic embeddings as topics
+                         are typically best represented by at most 10 words.
             n_gram_range: The n-gram range for the CountVectorizer.
                           Advised to keep high values between 1 and 3.
                           More would likely lead to memory issues.
@@ -103,13 +113,15 @@ class BERTopic:
                        "auto" to automatically reduce topics that have a similarity of at
                        least 0.9, do not maps all others.
             low_memory: Sets UMAP low memory to True to make sure less memory is used.
-            calculate_probabilities: Whether to calculate the topic probabilities. This could
-                                     slow down the extraction of topics if you have many
-                                     documents (> 100_000). Set this only to True if you
-                                     have a low amount of documents or if you do not mind
-                                     more computation time.
-                                     NOTE: since probabilities are not calculated, you cannot
-                                     use the corresponding visualization `visualize_probabilities`.
+            calculate_probabilities: Whether to calculate the probabilities of all topics
+                                     per document instead of the probability of the assigned
+                                     topic per document. This could slow down the extraction
+                                     of topics if you have many documents (> 100_000). Set this
+                                     only to True if you have a low amount of documents or if
+                                     you do not mind more computation time.
+                                     NOTE: If false you cannot use the corresponding
+                                     visualization method `visualize_probabilities`.
+            seed_topic_list: A list of seed words per topic to converge around
             verbose: Changes the verbosity of the model, Set to True if you want
                      to track the stages of the model.
             embedding_model: Use a custom embedding model.
@@ -135,6 +147,7 @@ class BERTopic:
         self.low_memory = low_memory
         self.calculate_probabilities = False # calculate_probabilities :::change back if does not work
         self.verbose = verbose
+        self.seed_topic_list = seed_topic_list
 
         # Embedding model
         self.language = language if not embedding_model else None
@@ -162,11 +175,12 @@ class BERTopic:
                                                     metric='cosine')
 
         self.topics = None
+        self.topic_mapper = None
         self.topic_sizes = None
-        self.reduced_topics_mapped = None
-        self.mapped_topics = None
+        self.merged_topics = None
         self.topic_embeddings = None
         self.topic_sim_matrix = None
+        self.representative_docs = None
 
         if verbose:
             logger.set_level("DEBUG")
@@ -203,7 +217,7 @@ class BERTopic:
 
         # Create embeddings
         docs = fetch_20newsgroups(subset='all')['data']
-        sentence_model = SentenceTransformer("distilbert-base-nli-mean-tokens")
+        sentence_model = SentenceTransformer("all-MiniLM-L6-v2")
         embeddings = sentence_model.encode(docs, show_progress_bar=True)
 
         # Create topic model
@@ -238,10 +252,11 @@ class BERTopic:
 
         Returns:
             predictions: Topic predictions for each documents
-            probabilities: The topic probability distribution which is returned by default.
-                           If `calculate_probabilities` in BERTopic is set to False, then the
-                           probabilities are not calculated to speed up computation and
-                           decrease memory usage.
+            probabilities: The probability of the assigned topic per document.
+                           If `calculate_probabilities` in BERTopic is set to True, then
+                           it calculates the probabilities of all topics across all documents
+                           instead of only the assigned topic. This, however, slows down
+                           computation and may increase memory usage.
 
         Usage:
 
@@ -250,7 +265,7 @@ class BERTopic:
         from sklearn.datasets import fetch_20newsgroups
 
         docs = fetch_20newsgroups(subset='all')['data']
-        topic_model = BERTopic(calculate_probabilities=True)
+        topic_model = BERTopic()
         topics, probs = topic_model.fit_transform(docs)
         ```
 
@@ -263,11 +278,11 @@ class BERTopic:
 
         # Create embeddings
         docs = fetch_20newsgroups(subset='all')['data']
-        sentence_model = SentenceTransformer("distilbert-base-nli-mean-tokens")
+        sentence_model = SentenceTransformer("all-MiniLM-L6-v2")
         embeddings = sentence_model.encode(docs, show_progress_bar=True)
 
         # Create topic model
-        topic_model = BERTopic(calculate_probabilities=True)
+        topic_model = BERTopic()
         topics, probs = topic_model.fit_transform(docs, embeddings)
         ```
         """
@@ -294,6 +309,8 @@ class BERTopic:
                                                       language=self.language)
 
         # Reduce dimensionality with UMAP
+        if self.seed_topic_list is not None and self.embedding_model is not None:
+            y, embeddings = self._guided_topic_modeling(embeddings)
         umap_embeddings = self._reduce_dimensionality(embeddings, y)
 
         # Cluster UMAP embeddings with HDBSCAN
@@ -302,13 +319,20 @@ class BERTopic:
 
         docs_df = documents
 
+        # Sort and Map Topic IDs by their frequency
+        if not self.nr_topics:
+            documents = self._sort_mappings_by_frequency(documents)
+
+
         # Extract topics by calculating c-TF-IDF
         self._extract_topics(documents)
 
+        # Reduce topics
         if self.nr_topics:
             documents = self._reduce_topics(documents)
-            probabilities = self._map_probabilities(probabilities)
 
+        self._map_representative_docs(original_topics=True)
+        probabilities = self._map_probabilities(probabilities, original_topics=True)
         predictions = documents.Topic.to_list()
 
         # Documents per topic as a list
@@ -383,7 +407,7 @@ class BERTopic:
 
         docs = fetch_20newsgroups(subset='all')['data']
         topic_model = BERTopic().fit(docs)
-        topics, _ = topic_model.transform(docs)
+        topics, probs = topic_model.transform(docs)
         ```
 
         If you want to use your own embeddings:
@@ -395,12 +419,12 @@ class BERTopic:
 
         # Create embeddings
         docs = fetch_20newsgroups(subset='all')['data']
-        sentence_model = SentenceTransformer("distilbert-base-nli-mean-tokens")
+        sentence_model = SentenceTransformer("all-MiniLM-L6-v2")
         embeddings = sentence_model.encode(docs, show_progress_bar=True)
 
         # Create topic model
         topic_model = BERTopic().fit(docs, embeddings)
-        topics, _ = topic_model.transform(docs, embeddings)
+        topics, probs = topic_model.transform(docs, embeddings)
         ```
         """
         check_is_fitted(self)
@@ -417,19 +441,16 @@ class BERTopic:
         umap_embeddings = self.umap_model.transform(embeddings)
         # predictions, _ = hdbscan.approximate_predict(self.hdbscan_model, umap_embeddings)
         print('plssss work till here')
-        predictions = self.hdbscan_model.fit_predict(umap_embeddings)
+        # predictions = self.hdbscan_model.fit_predict(umap_embeddings)
+        predictions, probabilities = hdbscan.approximate_predict(self.hdbscan_model, umap_embeddings)
 
         if self.calculate_probabilities:
             probabilities = hdbscan.membership_vector(self.hdbscan_model, umap_embeddings)
-            if len(documents) == 1:
-                probabilities = probabilities.flatten()
         else:
             probabilities = None
 
-        if self.mapped_topics:
-            predictions = self._map_predictions(predictions)
-            probabilities = self._map_probabilities(probabilities)
-
+        probabilities = self._map_probabilities(probabilities, original_topics=True)
+        predictions = self._map_predictions(predictions)
         return predictions, probabilities
 
     def topics_over_time(self,
@@ -489,7 +510,7 @@ class BERTopic:
         ```python
         from bertopic import BERTopic
         topic_model = BERTopic()
-        topics, _ = topic_model.fit_transform(docs)
+        topics, probs = topic_model.fit_transform(docs)
         topics_over_time = topic_model.topics_over_time(docs, topics, timestamps, nr_bins=20)
         ```
         """
@@ -605,7 +626,7 @@ class BERTopic:
         ```python
         from bertopic import BERTopic
         topic_model = BERTopic()
-        topics, _ = topic_model.fit_transform(docs)
+        topics, probs = topic_model.fit_transform(docs)
         topics_per_class = topic_model.topics_per_class(docs, topics, classes)
         ```
         """
@@ -773,7 +794,7 @@ class BERTopic:
         ```
         """
         check_is_fitted(self)
-        if self.topics.get(topic):
+        if topic in self.topics:
             return self.topics[topic]
         else:
             return False
@@ -834,6 +855,36 @@ class BERTopic:
             return pd.DataFrame(self.topic_sizes.items(), columns=['Topic', 'Count']).sort_values("Count",
                                                                                                   ascending=False)
 
+    def get_representative_docs(self, topic: int = None) -> List[str]:
+        """ Extract representative documents per topic
+
+        Arguments:
+            topic: A specific topic for which you want
+                   the representative documents
+
+        Returns:
+            Representative documents of the chosen topic
+
+        Usage:
+
+        To extract the representative docs of all topics:
+
+        ```python
+        representative_docs = topic_model.get_representative_docs()
+        ```
+
+        To get the representative docs of a single topic:
+
+        ```python
+        representative_docs = topic_model.get_representative_docs(12)
+        ```
+        """
+        check_is_fitted(self)
+        if isinstance(topic, int):
+            return self.representative_docs[topic]
+        else:
+            return self.representative_docs
+
     def reduce_topics(self,
                       docs: List[str],
                       topics: List[int],
@@ -873,7 +924,7 @@ class BERTopic:
         If probabilities were not calculated simply run the function without them:
 
         ```python
-        new_topics, _= topic_model.reduce_topics(docs, topics, nr_topics=30)
+        new_topics, new_probs = topic_model.reduce_topics(docs, topics, nr_topics=30)
         ```
         """
         check_is_fitted(self)
@@ -881,18 +932,31 @@ class BERTopic:
         documents = pd.DataFrame({"Document": docs, "Topic": topics})
 
         # Reduce number of topics
-        self._extract_topics(documents)
         documents = self._reduce_topics(documents)
+        self.merged_topics = None
+        self._map_representative_docs()
+
+        # Extract topics and map probabilities
         new_topics = documents.Topic.to_list()
         new_probabilities = self._map_probabilities(probabilities)
 
         return new_topics, new_probabilities
 
-    def visualize_topics(self) -> go.Figure:
+    def visualize_topics(self,
+                         topics: List[int] = None,
+                         top_n_topics: int = None,
+                         width: int = 650,
+                         height: int = 650) -> go.Figure:
         """ Visualize topics, their sizes, and their corresponding words
 
         This visualization is highly inspired by LDAvis, a great visualization
         technique typically reserved for LDA.
+
+        Arguments:
+            topics: A selection of topics to visualize
+            top_n_topics: Only select the top n most frequent topics
+            width: The width of the figure.
+            height: The height of the figure.
 
         Usage:
 
@@ -910,32 +974,82 @@ class BERTopic:
         ```
         """
         check_is_fitted(self)
+        return plotting.visualize_topics(self,
+                                         topics=topics,
+                                         top_n_topics=top_n_topics,
+                                         width=width,
+                                         height=height)
 
-        # Extract topic words and their frequencies
-        topic_list = sorted(list(self.topics.keys()))
-        frequencies = [self.topic_sizes[topic] for topic in topic_list]
-        words = [" | ".join([word[0] for word in self.get_topic(topic)[:5]]) for topic in topic_list]
+    def visualize_term_rank(self,
+                            topics: List[int] = None,
+                            log_scale: bool = False,
+                            width: int = 800,
+                            height: int = 500) -> go.Figure:
+        """ Visualize the ranks of all terms across all topics
 
-        # Embed c-TF-IDF into 2D
-        embeddings = MinMaxScaler().fit_transform(self.c_tf_idf.toarray())
-        embeddings = UMAP(n_neighbors=2, n_components=2, metric='hellinger').fit_transform(embeddings)
+        Each topic is represented by a set of words. These words, however,
+        do not all equally represent the topic. This visualization shows
+        how many words are needed to represent a topic and at which point
+        the beneficial effect of adding words starts to decline.
 
-        # Visualize with plotly
-        df = pd.DataFrame({"x": embeddings[1:, 0], "y": embeddings[1:, 1],
-                           "Topic": topic_list[1:], "Words": words[1:], "Size": frequencies[1:]})
-        return self._plotly_topic_visualization(df, topic_list)
+        Arguments:
+            topics: A selection of topics to visualize. These will be colored
+                    red where all others will be colored black.
+            log_scale: Whether to represent the ranking on a log scale
+            width: The width of the figure.
+            height: The height of the figure.
+
+        Returns:
+            fig: A plotly figure
+
+        Usage:
+
+        To visualize the ranks of all words across
+        all topics simply run:
+
+        ```python
+        topic_model.visualize_term_rank()
+        ```
+
+        Or if you want to save the resulting figure:
+
+        ```python
+        fig = topic_model.visualize_term_rank()
+        fig.write_html("path/to/file.html")
+        ```
+
+        Reference:
+
+        This visualization was heavily inspired by the
+        "Term Probability Decline" visualization found in an
+        analysis by the amazing [tmtoolkit](https://tmtoolkit.readthedocs.io/).
+        Reference to that specific analysis can be found
+        [here](https://wzbsocialsciencecenter.github.io/tm_corona/tm_analysis.html).
+        """
+        check_is_fitted(self)
+        return plotting.visualize_term_rank(self,
+                                            topics=topics,
+                                            log_scale=log_scale,
+                                            width=width,
+                                            height=height)
 
     def visualize_topics_over_time(self,
                                    topics_over_time: pd.DataFrame,
-                                   top_n: int = None,
-                                   topics: List[int] = None) -> go.Figure:
+                                   top_n_topics: int = None,
+                                   topics: List[int] = None,
+                                   normalize_frequency: bool = False,
+                                   width: int = 1250,
+                                   height: int = 450) -> go.Figure:
         """ Visualize topics over time
 
         Arguments:
             topics_over_time: The topics you would like to be visualized with the
                               corresponding topic representation
-            top_n: To visualize the most frequent topics instead of all
+            top_n_topics: To visualize the most frequent topics instead of all
             topics: Select which topics you would like to be visualized
+            normalize_frequency: Whether to normalize each topic's frequency individually
+            width: The width of the figure.
+            height: The height of the figure.
 
         Returns:
             A plotly.graph_objects.Figure including all traces
@@ -957,74 +1071,31 @@ class BERTopic:
         ```
         """
         check_is_fitted(self)
-        colors = ["#E69F00", "#56B4E9", "#009E73", "#F0E442", "#D55E00", "#0072B2", "#CC79A7"]
-
-        # Select topics
-        if topics:
-            selected_topics = topics
-        elif top_n:
-            selected_topics = self.get_topic_freq().head(top_n + 1)[1:].Topic.values
-        else:
-            selected_topics = self.get_topic_freq().Topic.values
-
-        # Prepare data
-        topic_names = {key: value[:40] + "..." if len(value) > 40 else value for key, value in self.topic_names.items()}
-        topics_over_time["Name"] = topics_over_time.Topic.map(topic_names)
-        data = topics_over_time.loc[topics_over_time.Topic.isin(selected_topics), :]
-
-        # Add traces
-        fig = go.Figure()
-        for index, topic in enumerate(data.Topic.unique()):
-            trace_data = data.loc[data.Topic == topic, :]
-            topic_name = trace_data.Name.values[0]
-            words = trace_data.Words.values
-            fig.add_trace(go.Scatter(x=trace_data.Timestamp, y=trace_data.Frequency,
-                                     mode='lines',
-                                     marker_color=colors[index % 7],
-                                     hoverinfo="text",
-                                     name=topic_name,
-                                     hovertext=[f'<b>Topic {topic}</b><br>Words: {word}' for word in words]))
-
-        # Styling of the visualization
-        fig.update_xaxes(showgrid=True)
-        fig.update_yaxes(showgrid=True)
-        fig.update_layout(
-            yaxis_title="Frequency",
-            title={
-                'text': "<b>Topics over Time",
-                'y': .95,
-                'x': 0.40,
-                'xanchor': 'center',
-                'yanchor': 'top',
-                'font': dict(
-                    size=22,
-                    color="Black")
-            },
-            template="simple_white",
-            width=1250,
-            height=450,
-            hoverlabel=dict(
-                bgcolor="white",
-                font_size=16,
-                font_family="Rockwell"
-            ),
-            legend=dict(
-                title="<b>Global Topic Representation",
-            )
-        )
-        return fig
+        return plotting.visualize_topics_over_time(self,
+                                                   topics_over_time=topics_over_time,
+                                                   top_n_topics=top_n_topics,
+                                                   topics=topics,
+                                                   normalize_frequency=normalize_frequency,
+                                                   width=width,
+                                                   height=height)
 
     def visualize_topics_per_class(self,
                                    topics_per_class: pd.DataFrame,
-                                   top_n: int = 10,
-                                   topics: List[int] = None):
+                                   top_n_topics: int = 10,
+                                   topics: List[int] = None,
+                                   normalize_frequency: bool = False,
+                                   width: int = 1250,
+                                   height: int = 900) -> go.Figure:
         """ Visualize topics per class
 
         Arguments:
             topics_per_class: The topics you would like to be visualized with the
                               corresponding topic representation
-            top_n: To visualize the most frequent topics instead of all
+            top_n_topics: To visualize the most frequent topics instead of all
             topics: Select which topics you would like to be visualized
+            normalize_frequency: Whether to normalize each topic's frequency individually
+            width: The width of the figure.
+            height: The height of the figure.
 
         Returns:
             A plotly.graph_objects.Figure including all traces
@@ -1045,79 +1116,28 @@ class BERTopic:
         fig.write_html("path/to/file.html")
         ```
         """
-        colors = ["#E69F00", "#56B4E9", "#009E73", "#F0E442", "#D55E00", "#0072B2", "#CC79A7"]
-
-        # Select topics
-        if topics:
-            selected_topics = topics
-        elif top_n:
-            selected_topics = self.get_topic_freq().head(top_n + 1)[1:].Topic.values
-        else:
-            selected_topics = self.get_topic_freq().Topic.values
-
-        # Prepare data
-        topic_names = {key: value[:40] + "..." if len(value) > 40 else value for key, value in self.topic_names.items()}
-        topics_per_class["Name"] = topics_per_class.Topic.map(topic_names)
-        data = topics_per_class.loc[topics_per_class.Topic.isin(selected_topics), :]
-
-        # Add traces
-        fig = go.Figure()
-        for index, topic in enumerate(selected_topics):
-            if index == 0:
-                visible = True
-            else:
-                visible = "legendonly"
-            trace_data = data.loc[data.Topic == topic, :]
-            topic_name = trace_data.Name.values[0]
-            words = trace_data.Words.values
-            fig.add_trace(go.Bar(y=trace_data.Class,
-                                 x=trace_data.Frequency,
-                                 visible=visible,
-                                 marker_color=colors[index % 7],
-                                 hoverinfo="text",
-                                 name=topic_name,
-                                 orientation="h",
-                                 hovertext=[f'<b>Topic {topic}</b><br>Words: {word}' for word in words]))
-
-        # Styling of the visualization
-        fig.update_xaxes(showgrid=True)
-        fig.update_yaxes(showgrid=True)
-        fig.update_layout(
-            xaxis_title="Frequency",
-            yaxis_title="Class",
-            title={
-                'text': "<b>Topics per Class",
-                'y': .95,
-                'x': 0.40,
-                'xanchor': 'center',
-                'yanchor': 'top',
-                'font': dict(
-                    size=22,
-                    color="Black")
-            },
-            template="simple_white",
-            width=1250,
-            height=900,
-            hoverlabel=dict(
-                bgcolor="white",
-                font_size=16,
-                font_family="Rockwell"
-            ),
-            legend=dict(
-                title="<b>Global Topic Representation",
-            )
-        )
-        return fig
+        check_is_fitted(self)
+        return plotting.visualize_topics_per_class(self,
+                                                   topics_per_class=topics_per_class,
+                                                   top_n_topics=top_n_topics,
+                                                   topics=topics,
+                                                   normalize_frequency=normalize_frequency,
+                                                   width=width,
+                                                   height=height)
 
     def visualize_distribution(self,
                                probabilities: np.ndarray,
-                               min_probability: float = 0.015) -> go.Figure:
+                               min_probability: float = 0.015,
+                               width: int = 800,
+                               height: int = 600) -> go.Figure:
         """ Visualize the distribution of topic probabilities
 
         Arguments:
             probabilities: An array of probability scores
             min_probability: The minimum probability score to visualize.
                              All others are ignored.
+            width: The width of the figure.
+            height: The height of the figure.
 
         Usage:
 
@@ -1136,63 +1156,146 @@ class BERTopic:
         ```
         """
         check_is_fitted(self)
-        if len(probabilities[probabilities > min_probability]) == 0:
-            raise ValueError("There are no values where `min_probability` is higher than the "
-                             "probabilities that were supplied. Lower `min_probability` to prevent this error.")
-        if not self.calculate_probabilities:
-            raise ValueError("This visualization cannot be used if you have set `calculate_probabilities` to False "
-                             "as it uses the topic probabilities. ")
+        return plotting.visualize_distribution(self,
+                                               probabilities=probabilities,
+                                               min_probability=min_probability,
+                                               width=width,
+                                               height=height)
 
-        # Get values and indices equal or exceed the minimum probability
-        labels_idx = np.argwhere(probabilities >= min_probability).flatten()
-        vals = probabilities[labels_idx].tolist()
+    def visualize_hierarchy(self,
+                            orientation: str = "left",
+                            topics: List[int] = None,
+                            top_n_topics: int = None,
+                            width: int = 1000,
+                            height: int = 600) -> go.Figure:
+        """ Visualize a hierarchical structure of the topics
 
-        # Create labels
-        labels = []
-        for idx in labels_idx:
-            words = self.get_topic(idx)
-            if words:
-                label = [word[0] for word in words[:5]]
-                label = f"<b>Topic {idx}</b>: {'_'.join(label)}"
-                label = label[:40] + "..." if len(label) > 40 else label
-                labels.append(label)
-            else:
-                vals.remove(probabilities[idx])
+        A ward linkage function is used to perform the
+        hierarchical clustering based on the cosine distance
+        matrix between topic embeddings.
 
-        # Create Figure
-        fig = go.Figure(go.Bar(
-            x=vals,
-            y=labels,
-            marker=dict(
-                color='#C8D2D7',
-                line=dict(
-                    color='#6E8484',
-                    width=1),
-            ),
-            orientation='h')
-        )
+        Arguments:
+            orientation: The orientation of the figure.
+                         Either 'left' or 'bottom'
+            topics: A selection of topics to visualize
+            top_n_topics: Only select the top n most frequent topics
+            width: The width of the figure.
+            height: The height of the figure.
 
-        fig.update_layout(
-            xaxis_title="Probability",
-            title={
-                'text': "<b>Topic Probability Distribution",
-                'y': .95,
-                'x': 0.5,
-                'xanchor': 'center',
-                'yanchor': 'top',
-                'font': dict(
-                    size=22,
-                    color="Black")
-            },
-            template="simple_white",
-            hoverlabel=dict(
-                bgcolor="white",
-                font_size=16,
-                font_family="Rockwell"
-            ),
-        )
+        Returns:
+            fig: A plotly figure
 
-        return fig
+        Usage:
+
+        To visualize the hierarchical structure of
+        topics simply run:
+
+        ```python
+        topic_model.visualize_hierarchy()
+        ```
+
+        Or if you want to save the resulting figure:
+
+        ```python
+        fig = topic_model.visualize_hierarchy()
+        fig.write_html("path/to/file.html")
+        ```
+        """
+        check_is_fitted(self)
+        return plotting.visualize_hierarchy(self,
+                                            orientation=orientation,
+                                            topics=topics,
+                                            top_n_topics=top_n_topics,
+                                            width=width,
+                                            height=height)
+
+    def visualize_heatmap(self,
+                          topics: List[int] = None,
+                          top_n_topics: int = None,
+                          n_clusters: int = None,
+                          width: int = 800,
+                          height: int = 800) -> go.Figure:
+        """ Visualize a heatmap of the topic's similarity matrix
+
+        Based on the cosine similarity matrix between topic embeddings,
+        a heatmap is created showing the similarity between topics.
+
+        Arguments:
+            topics: A selection of topics to visualize.
+            top_n_topics: Only select the top n most frequent topics.
+            n_clusters: Create n clusters and order the similarity
+                        matrix by those clusters.
+            width: The width of the figure.
+            height: The height of the figure.
+
+        Returns:
+            fig: A plotly figure
+
+        Usage:
+
+        To visualize the similarity matrix of
+        topics simply run:
+
+        ```python
+        topic_model.visualize_heatmap()
+        ```
+
+        Or if you want to save the resulting figure:
+
+        ```python
+        fig = topic_model.visualize_heatmap()
+        fig.write_html("path/to/file.html")
+        ```
+        """
+        check_is_fitted(self)
+        return plotting.visualize_heatmap(self,
+                                          topics=topics,
+                                          top_n_topics=top_n_topics,
+                                          n_clusters=n_clusters,
+                                          width=width,
+                                          height=height)
+
+    def visualize_barchart(self,
+                           topics: List[int] = None,
+                           top_n_topics: int = 6,
+                           n_words: int = 5,
+                           width: int = 800,
+                           height: int = 600) -> go.Figure:
+        """ Visualize a barchart of selected topics
+
+        Arguments:
+            topics: A selection of topics to visualize.
+            top_n_topics: Only select the top n most frequent topics.
+            n_words: Number of words to show in a topic
+            width: The width of the figure.
+            height: The height of the figure.
+
+        Returns:
+            fig: A plotly figure
+
+        Usage:
+
+        To visualize the barchart of selected topics
+        simply run:
+
+        ```python
+        topic_model.visualize_barchart()
+        ```
+
+        Or if you want to save the resulting figure:
+
+        ```python
+        fig = topic_model.visualize_barchart()
+        fig.write_html("path/to/file.html")
+        ```
+        """
+        check_is_fitted(self)
+        return plotting.visualize_barchart(self,
+                                           topics=topics,
+                                           top_n_topics=top_n_topics,
+                                           n_words=n_words,
+                                           width=width,
+                                           height=height)
 
     def save(self,
              path: str,
@@ -1229,7 +1332,7 @@ class BERTopic:
     @classmethod
     def load(cls,
              path: str,
-             embedding_model = None):
+             embedding_model=None):
         """ Loads the model from the specified path
 
         Arguments:
@@ -1246,13 +1349,13 @@ class BERTopic:
         or if you did not save the embedding model:
 
         ```python
-        BERTopic.load("my_model", embedding_model="xlm-r-bert-base-nli-stsb-mean-tokens")
+        BERTopic.load("my_model", embedding_model="all-MiniLM-L6-v2")
         ```
         """
         with open(path, 'rb') as file:
             if embedding_model:
                 topic_model = joblib.load(file)
-                topic_model.embedding_model = embedding_model
+                topic_model.embedding_model = select_backend(embedding_model)
             else:
                 topic_model = joblib.load(file)
             return topic_model
@@ -1310,11 +1413,11 @@ class BERTopic:
 
     def _map_predictions(self, predictions: List[int]) -> List[int]:
         """ Map predictions to the correct topics if topics were reduced """
-        mapped_predictions = []
-        for prediction in predictions:
-            while self.mapped_topics.get(prediction):
-                prediction = self.mapped_topics[prediction]
-            mapped_predictions.append(prediction)
+        mappings = self.topic_mapper.get_mappings(original_topics=True)
+        mapped_predictions = [mappings[prediction]
+                              if prediction in mappings
+                              else -1
+                              for prediction in predictions]
         return mapped_predictions
 
     def _reduce_dimensionality(self,
@@ -1357,15 +1460,54 @@ class BERTopic:
         """
         self.hdbscan_model.fit(umap_embeddings)
         documents['Topic'] = self.hdbscan_model.labels_
+        probabilities = self.hdbscan_model.probabilities_
 
         if self.calculate_probabilities:
             probabilities = hdbscan.all_points_membership_vectors(self.hdbscan_model)
-        else:
-            probabilities = None
 
         self._update_topic_size(documents)
+        self._save_representative_docs(documents)
+        self.topic_mapper = TopicMapper(self.hdbscan_model)
         logger.info("Clustered UMAP embeddings with HDBSCAN")
         return documents, probabilities
+
+    def _guided_topic_modeling(self, embeddings: np.ndarray) -> Tuple[List[int], np.array]:
+        """ Apply Guided Topic Modeling
+
+        We transform the seeded topics to embeddings using the
+        same embedder as used for generating document embeddings.
+
+        Then, we apply cosine similarity between the embeddings
+        and set labels for documents that are more similar to
+        one of the topics, then the average document.
+
+        If a document is more similar to the average document
+        than any of the topics, it gets the -1 label and is
+        thereby not included in UMAP.
+
+        Arguments:
+            embeddings: The document embeddings
+
+        Returns
+            y: The labels for each seeded topic
+            embeddings: Updated embeddings
+        """
+        # Create embeddings from the seeded topics
+        seed_topic_list = [" ".join(seed_topic) for seed_topic in self.seed_topic_list]
+        seed_topic_embeddings = self._extract_embeddings(seed_topic_list, verbose=self.verbose)
+        seed_topic_embeddings = np.vstack([seed_topic_embeddings, embeddings.mean(axis=0)])
+
+        # Label documents that are most similar to one of the seeded topics
+        sim_matrix = cosine_similarity(embeddings, seed_topic_embeddings)
+        y = [np.argmax(sim_matrix[index]) for index in range(sim_matrix.shape[0])]
+        y = [val if val != len(seed_topic_list) else -1 for val in y]
+
+        # Average the document embeddings related to the seeded topics with the
+        # embedding of the seeded topic to force the documents in a cluster
+        for seed_topic in range(len(seed_topic_list)):
+            indices = [index for index, topic in enumerate(y) if topic == seed_topic]
+            embeddings[indices] = np.average([embeddings[indices], seed_topic_embeddings[seed_topic]], weights=[3, 1])
+        return y, embeddings
 
     def _extract_topics(self, documents: pd.DataFrame):
         """ Extract topics from the clusters using a class-based TF-IDF
@@ -1383,6 +1525,68 @@ class BERTopic:
         self.topic_names = {key: f"{key}_" + "_".join([word[0] for word in values[:4]])
                             for key, values in
                             self.topics.items()}
+
+    def _save_representative_docs(self, documents: pd.DataFrame):
+        """ Save the most representative docs (3) per topic
+
+        The most representative docs are extracted by taking
+        the exemplars from the HDBSCAN-generated clusters.
+
+        Full instructions can be found here:
+            https://hdbscan.readthedocs.io/en/latest/soft_clustering_explanation.html
+
+        Arguments:
+            documents: Dataframe with documents and their corresponding IDs
+        """
+        # Prepare the condensed tree and luf clusters beneath a given cluster
+        condensed_tree = self.hdbscan_model.condensed_tree_
+        raw_tree = condensed_tree._raw_tree
+        clusters = sorted(condensed_tree._select_clusters())
+        cluster_tree = raw_tree[raw_tree['child_size'] > 1]
+
+        #  Find the points with maximum lambda value in each leaf
+        representative_docs = {}
+        for topic in documents['Topic'].unique():
+            if topic != -1:
+                leaves = hdbscan.plots._recurse_leaf_dfs(cluster_tree, clusters[topic])
+
+                result = np.array([])
+                for leaf in leaves:
+                    max_lambda = raw_tree['lambda_val'][raw_tree['parent'] == leaf].max()
+                    points = raw_tree['child'][(raw_tree['parent'] == leaf) & (raw_tree['lambda_val'] == max_lambda)]
+                    result = np.hstack((result, points))
+
+                representative_docs[topic] = list(np.random.choice(result, 3, replace=False).astype(int))
+
+        # Convert indices to documents
+        self.representative_docs = {topic: [documents.iloc[doc_id].Document for doc_id in doc_ids]
+                                    for topic, doc_ids in
+                                    representative_docs.items()}
+
+    def _map_representative_docs(self, original_topics: bool = False):
+        """ Map the representative docs per topic to the correct topics
+
+        If topics were reduced, remove documents from topics that were
+        merged into larger topics as we assume that the documents from
+        larger topics are better representative of the entire merged
+        topic.
+
+        Args:
+            original_topics: Whether we want to map from the
+                             original topics to the most recent topics
+                             or from the second-most recent topics.
+        """
+        mappings = self.topic_mapper.get_mappings(original_topics)
+        representative_docs = self.representative_docs.copy()
+
+        # Update the representative documents
+        updated_representative_docs = {mappings[old_topic]: []
+                                       for old_topic, _ in representative_docs.items()}
+        for old_topic, docs in representative_docs.items():
+            new_topic = mappings[old_topic]
+            updated_representative_docs[new_topic].extend(docs)
+
+        self.representative_docs = updated_representative_docs
 
     def _create_topic_vectors(self):
         """ Creates embeddings per topics based on their topic representation
@@ -1442,8 +1646,14 @@ class BERTopic:
         words = self.vectorizer_model.get_feature_names()
         X = self.vectorizer_model.transform(documents)
 
+        if self.seed_topic_list:
+            seed_topic_list = [seed for seeds in self.seed_topic_list for seed in seeds]
+            multiplier = np.array([1.2 if word in seed_topic_list else 1 for word in words])
+        else:
+            multiplier = None
+
         if fit:
-            self.transformer = ClassTFIDF().fit(X, n_samples=m)
+            self.transformer = ClassTFIDF().fit(X, n_samples=m, multiplier=multiplier)
 
         c_tf_idf = self.transformer.transform(X)
 
@@ -1481,18 +1691,25 @@ class BERTopic:
             topics: The top words per topic
         """
         if c_tf_idf is None:
-            c_tf_idf = self.c_tf_idf.toarray()
-        else:
-            c_tf_idf = c_tf_idf.toarray()
+            c_tf_idf = self.c_tf_idf
 
         if labels is None:
             labels = sorted(list(self.topic_sizes.keys()))
 
+        # Get the top 30 indices and values per row in a sparse c-TF-IDF matrix
+        indices = self._top_n_idx_sparse(c_tf_idf, 30)
+        scores = self._top_n_values_sparse(c_tf_idf, indices)
+        sorted_indices = np.argsort(scores, 1)
+        indices = np.take_along_axis(indices, sorted_indices, axis=1)
+        scores = np.take_along_axis(scores, sorted_indices, axis=1)
+
         # Get top 30 words per topic based on c-TF-IDF score
-        indices = c_tf_idf.argsort()[:, -30:]
-        topics = {label: [(words[j], c_tf_idf[i][j])
-                          for j in indices[i]][::-1]
-                  for i, label in enumerate(labels)}
+        topics = {label: [(words[word_index], score)
+                          if word_index and score > 0
+                          else ("", 0.00001)
+                          for word_index, score in zip(indices[index][::-1], scores[index][::-1])
+                          ]
+                  for index, label in enumerate(labels)}
 
         # Extract word embeddings for the top 30 words per topic and compare it
         # with the topic embedding to keep only the words most similar to the topic embedding
@@ -1503,10 +1720,13 @@ class BERTopic:
                 word_embeddings = self._extract_embeddings(words,
                                                            method="word",
                                                            verbose=False)
-                topic_embedding = self._extract_embeddings(" ".join(words), method="word", verbose=False).reshape(1, -1)
-
-                topic_words = mmr(topic_embedding, word_embeddings, words, top_n=self.top_n_words, diversity=0)
+                topic_embedding = self._extract_embeddings(" ".join(words),
+                                                           method="word",
+                                                           verbose=False).reshape(1, -1)
+                topic_words = mmr(topic_embedding, word_embeddings, words,
+                                  top_n=self.top_n_words, diversity=0)
                 topics[topic] = [(word, value) for word, value in topics[topic] if word in topic_words]
+        topics = {label: values[:self.top_n_words] for label, values in topics.items()}
 
         return topics
 
@@ -1519,13 +1739,17 @@ class BERTopic:
         Returns:
             documents: Updated dataframe with documents and the reduced number of Topics
         """
+        initial_nr_topics = len(self.get_topics())
+
         if isinstance(self.nr_topics, int):
-            documents = self._reduce_to_n_topics(documents)
+            if self.nr_topics < initial_nr_topics:
+                documents = self._reduce_to_n_topics(documents)
         elif isinstance(self.nr_topics, str):
             documents = self._auto_reduce_topics(documents)
         else:
             raise ValueError("nr_topics needs to be an int or 'auto'! ")
 
+        logger.info(f"Reduced number of topics from {initial_nr_topics} to {len(self.get_topic_freq())}")
         return documents
 
     def _reduce_to_n_topics(self, documents: pd.DataFrame) -> pd.DataFrame:
@@ -1537,38 +1761,43 @@ class BERTopic:
         Returns:
             documents: Updated dataframe with documents and the reduced number of Topics
         """
-        if not self.mapped_topics:
-            self.mapped_topics = {}
-        initial_nr_topics = len(self.get_topics())
+        # Track which topics where originally merged
+        if not self.merged_topics:
+            self.merged_topics = []
 
         # Create topic similarity matrix
-        similarities = cosine_similarity(self.c_tf_idf)
+        if self.topic_embeddings is not None:
+            similarities = cosine_similarity(np.array(self.topic_embeddings))
+        else:
+            similarities = cosine_similarity(self.c_tf_idf)
         np.fill_diagonal(similarities, 0)
 
+        # Find most similar topic to least common topic
+        topics = documents.Topic.tolist().copy()
+        mapped_topics = {}
         while len(self.get_topic_freq()) > self.nr_topics + 1:
-            # Find most similar topic to least common topic
             topic_to_merge = self.get_topic_freq().iloc[-1].Topic
             topic_to_merge_into = np.argmax(similarities[topic_to_merge + 1]) - 1
             similarities[:, topic_to_merge + 1] = -1
+            self.merged_topics.append(topic_to_merge)
 
             # Update Topic labels
             documents.loc[documents.Topic == topic_to_merge, "Topic"] = topic_to_merge_into
-            self.mapped_topics[topic_to_merge] = topic_to_merge_into
-
-            # Update new topic content
+            mapped_topics[topic_to_merge] = topic_to_merge_into
             self._update_topic_size(documents)
 
+        # Map topics
+        mapped_topics = {from_topic: to_topic for from_topic, to_topic in zip(topics, documents.Topic.tolist())}
+        self.topic_mapper.add_mappings(mapped_topics)
+
+        # Update representations
+        documents = self._sort_mappings_by_frequency(documents)
         self._extract_topics(documents)
-
-        if initial_nr_topics <= self.nr_topics:
-            logger.info(f"Since {initial_nr_topics} were found, they could not be reduced to {self.nr_topics}")
-        else:
-            logger.info(f"Reduced number of topics from {initial_nr_topics} to {len(self.get_topic_freq())}")
-
+        self._update_topic_size(documents)
         return documents
 
     def _auto_reduce_topics(self, documents: pd.DataFrame) -> pd.DataFrame:
-        """ Reduce the number of topics as long as it exceeds a minimum similarity of 0.915
+        """ Reduce the number of topics automatically using HDBSCAN
 
         Arguments:
             documents: Dataframe with documents and their corresponding IDs and Topics
@@ -1576,42 +1805,75 @@ class BERTopic:
         Returns:
             documents: Updated dataframe with documents and the reduced number of Topics
         """
-        initial_nr_topics = len(self.get_topics())
-        has_mapped = []
-        if not self.mapped_topics:
-            self.mapped_topics = {}
+        topics = documents.Topic.tolist().copy()
+        unique_topics = sorted(list(documents.Topic.unique()))[1:]
+        max_topic = unique_topics[-1]
 
-        # Create topic similarity matrix
-        similarities = cosine_similarity(self.c_tf_idf)
-        np.fill_diagonal(similarities, 0)
+        # Find similar topics
+        if self.topic_embeddings is not None:
+            embeddings = np.array(self.topic_embeddings)
+        else:
+            embeddings = self.c_tf_idf.toarray()
+        norm_data = normalize(embeddings, norm='l2')
+        predictions = hdbscan.HDBSCAN(min_cluster_size=2,
+                                      metric='euclidean',
+                                      cluster_selection_method='eom',
+                                      prediction_data=True).fit_predict(norm_data[1:])
 
-        # Do not map the top 10% most frequent topics
-        not_mapped = int(np.ceil(len(self.get_topic_freq()) * 0.1))
-        to_map = self.get_topic_freq().Topic.values[not_mapped:][::-1]
+        # Map similar topics
+        mapped_topics = {unique_topics[index]: prediction + max_topic
+                         for index, prediction in enumerate(predictions)
+                         if prediction != -1}
+        documents.Topic = documents.Topic.map(mapped_topics).fillna(documents.Topic).astype(int)
+        mapped_topics = {from_topic: to_topic for from_topic, to_topic in zip(topics, documents.Topic.tolist())}
 
-        for topic_to_merge in to_map:
-            # Find most similar topic to least common topic
-            similarity = np.max(similarities[topic_to_merge + 1])
-            topic_to_merge_into = np.argmax(similarities[topic_to_merge + 1]) - 1
-
-            # Only map topics if they have a high similarity
-            if (similarity > 0.915) & (topic_to_merge_into not in has_mapped):
-                # Update Topic labels
-                documents.loc[documents.Topic == topic_to_merge, "Topic"] = topic_to_merge_into
-                self.mapped_topics[topic_to_merge] = topic_to_merge_into
-                similarities[:, topic_to_merge + 1] = -1
-
-                # Update new topic content
-                self._update_topic_size(documents)
-                has_mapped.append(topic_to_merge)
-
+        # Update documents and topics
+        self.topic_mapper.add_mappings(mapped_topics)
+        documents = self._sort_mappings_by_frequency(documents)
         self._extract_topics(documents)
-
-        logger.info(f"Reduced number of topics from {initial_nr_topics} to {len(self.get_topic_freq())}")
-
+        self._update_topic_size(documents)
         return documents
 
-    def _map_probabilities(self, probabilities: Union[np.ndarray, None]) -> Union[np.ndarray, None]:
+    def _sort_mappings_by_frequency(self, documents: pd.DataFrame) -> pd.DataFrame:
+        """ Reorder mappings by their frequency.
+
+        For example, if topic 88 was mapped to topic
+        5 and topic 5 turns out to be the largest topic,
+        then topic 5 will be topic 0. The second largest,
+        will be topic 1, etc.
+
+        If there are no mappings since no reduction of topics
+        took place, then the topics will simply be ordered
+        by their frequency and will get the topic ids based
+        on that order.
+
+        This means that -1 will remain the outlier class, and
+        that the rest of the topics will be in descending order
+        of ids and frequency.
+
+        Arguments:
+            documents: Dataframe with documents and their corresponding IDs and Topics
+
+        Returns:
+            documents: Updated dataframe with documents and the mapped
+                       and re-ordered topic ids
+        """
+        self._update_topic_size(documents)
+
+        # Map topics based on frequency
+        df = pd.DataFrame(self.topic_sizes.items(), columns=["Old_Topic", "Size"]).sort_values("Size", ascending=False)
+        df = df[df.Old_Topic != -1]
+        sorted_topics = {**{-1: -1}, **dict(zip(df.Old_Topic, range(len(df))))}
+        self.topic_mapper.add_mappings(sorted_topics)
+
+        # Map documents
+        documents.Topic = documents.Topic.map(sorted_topics).fillna(documents.Topic).astype(int)
+        self._update_topic_size(documents)
+        return documents
+
+    def _map_probabilities(self,
+                           probabilities: Union[np.ndarray, None],
+                           original_topics: bool = False) -> Union[np.ndarray, None]:
         """ Map the probabilities to the reduced topics.
         This is achieved by adding the probabilities together
         of all topics that were mapped to the same topic. Then,
@@ -1620,92 +1882,27 @@ class BERTopic:
 
         Arguments:
             probabilities: An array containing probabilities
+            original_topics: Whether we want to map from the
+                             original topics to the most recent topics
+                             or from the second-most recent topics.
 
         Returns:
-            new_probabilities: Updated probabilities
-
+            mapped_probabilities: Updated probabilities
         """
-        if isinstance(probabilities, np.ndarray):
-            new_probabilities = probabilities.copy()
-            for from_topic, to_topic in self.mapped_topics.items():
-                if to_topic != -1 and from_topic != -1:
-                    new_probabilities[:, to_topic] += new_probabilities[:, from_topic]
-                new_probabilities[:, from_topic] = 0
+        mappings = self.topic_mapper.get_mappings(original_topics)
 
-            return new_probabilities.round(3)
-        else:
-            return None
+        # Map array of probabilities (probability for assigned topic per document)
+        if probabilities is not None:
+            if len(probabilities.shape) == 2 and self.get_topic(-1):
+                mapped_probabilities = np.zeros((probabilities.shape[0],
+                                                 len(set(mappings.values())) - 1))
+                for from_topic, to_topic in mappings.items():
+                    if to_topic != -1 and from_topic != -1:
+                        mapped_probabilities[:, to_topic] += probabilities[:, from_topic]
 
-    @staticmethod
-    def _plotly_topic_visualization(df: pd.DataFrame,
-                                    topic_list: List[str]):
-        """ Create plotly-based visualization of topics with a slider for topic selection """
+                return mapped_probabilities
 
-        def get_color(topic_selected):
-            if topic_selected == -1:
-                marker_color = ["#B0BEC5" for _ in topic_list[1:]]
-            else:
-                marker_color = ["red" if topic == topic_selected else "#B0BEC5" for topic in topic_list[1:]]
-            return [{'marker.color': [marker_color]}]
-
-        # Prepare figure range
-        x_range = (df.x.min() - abs((df.x.min()) * .15), df.x.max() + abs((df.x.max()) * .15))
-        y_range = (df.y.min() - abs((df.y.min()) * .15), df.y.max() + abs((df.y.max()) * .15))
-
-        # Plot topics
-        fig = px.scatter(df, x="x", y="y", size="Size", size_max=40, template="simple_white", labels={"x": "", "y": ""},
-                         hover_data={"x": False, "y": False, "Topic": True, "Words": True, "Size": True})
-        fig.update_traces(marker=dict(color="#B0BEC5", line=dict(width=2, color='DarkSlateGrey')))
-
-        # Update hover order
-        fig.update_traces(hovertemplate="<br>".join(["<b>Topic %{customdata[2]}</b>",
-                                                     "Words: %{customdata[3]}",
-                                                     "Size: %{customdata[4]}"]))
-
-        # Create a slider for topic selection
-        steps = [dict(label=f"Topic {topic}", method="update", args=get_color(topic)) for topic in topic_list[1:]]
-        sliders = [dict(active=0, pad={"t": 50}, steps=steps)]
-
-        # Stylize layout
-        fig.update_layout(
-            title={
-                'text': "<b>Intertopic Distance Map",
-                'y': .95,
-                'x': 0.5,
-                'xanchor': 'center',
-                'yanchor': 'top',
-                'font': dict(
-                    size=22,
-                    color="Black")
-            },
-            width=650,
-            height=650,
-            hoverlabel=dict(
-                bgcolor="white",
-                font_size=16,
-                font_family="Rockwell"
-            ),
-            xaxis={"visible": False},
-            yaxis={"visible": False},
-            sliders=sliders
-        )
-
-        # Update axes ranges
-        fig.update_xaxes(range=x_range)
-        fig.update_yaxes(range=y_range)
-
-        # Add grid in a 'plus' shape
-        fig.add_shape(type="line",
-                      x0=sum(x_range) / 2, y0=y_range[0], x1=sum(x_range) / 2, y1=y_range[1],
-                      line=dict(color="#CFD8DC", width=2))
-        fig.add_shape(type="line",
-                      x0=x_range[0], y0=sum(y_range) / 2, x1=x_range[1], y1=sum(y_range) / 2,
-                      line=dict(color="#9E9E9E", width=2))
-        fig.add_annotation(x=x_range[0], y=sum(y_range) / 2, text="D1", showarrow=False, yshift=10)
-        fig.add_annotation(y=y_range[1], x=sum(x_range) / 2, text="D2", showarrow=False, xshift=10)
-        fig.data = fig.data[::-1]
-
-        return fig
+        return probabilities
 
     def _preprocess_text(self, documents: np.ndarray) -> List[str]:
         """ Basic preprocessing of text
@@ -1722,6 +1919,45 @@ class BERTopic:
             cleaned_documents = [re.sub(r'[^A-Za-z0-9 ]+', '', doc) for doc in cleaned_documents]
         cleaned_documents = [doc if doc != "" else "emptydoc" for doc in cleaned_documents]
         return cleaned_documents
+
+    @staticmethod
+    def _top_n_idx_sparse(matrix: csr_matrix, n: int) -> np.ndarray:
+        """ Return indices of top n values in each row of a sparse matrix
+
+        Retrieved from:
+            https://stackoverflow.com/questions/49207275/finding-the-top-n-values-in-a-row-of-a-scipy-sparse-matrix
+
+        Args:
+            matrix: The sparse matrix from which to get the top n indices per row
+            n: The number of highest values to extract from each row
+
+        Returns:
+            indices: The top n indices per row
+        """
+        indices = []
+        for le, ri in zip(matrix.indptr[:-1], matrix.indptr[1:]):
+            n_row_pick = min(n, ri - le)
+            values = matrix.indices[le + np.argpartition(matrix.data[le:ri], -n_row_pick)[-n_row_pick:]]
+            values = [values[index] if len(values) >= index + 1 else None for index in range(n)]
+            indices.append(values)
+        return np.array(indices)
+
+    @staticmethod
+    def _top_n_values_sparse(matrix: csr_matrix, indices: np.ndarray) -> np.ndarray:
+        """ Return the top n values for each row in a sparse matrix
+
+        Args:
+            matrix: The sparse matrix from which to get the top n indices per row
+            indices: The top n indices per row
+
+        Returns:
+            top_values: The top n scores per row
+        """
+        top_values = []
+        for row, values in enumerate(indices):
+            scores = np.array([matrix[row, value] if value is not None else 0 for value in values])
+            top_values.append(scores)
+        return np.array(top_values)
 
     @classmethod
     def _get_param_names(cls):
@@ -1750,3 +1986,75 @@ class BERTopic:
             parameters += f"{parameter}={value}, "
 
         return f"BERTopic({parameters[:-2]})"
+
+
+class TopicMapper:
+    """ Keep track of Topic Mappings
+
+    The number of topics can be reduced
+    by merging them together. This mapping
+    needs to be tracked in BERTopic as new
+    predictions need to be mapped to the new
+    topics.
+
+    These mappings are tracked in the `self.mappings`
+    variable where each set of topic are stacked horizontally.
+    For example, the most recent topics can be found in the
+    last column. To get a mapping, simply take the two columns
+    of topics.
+
+    In other words, it is represented as graph:
+    Topic 1 --> Topic 11 --> Topic 4 --> etc.
+
+    """
+    def __init__(self, hdbscan_model: hdbscan.HDBSCAN):
+        """ Initalization of Topic Mapper
+
+        Args:
+            hdbscan_model: The trained HDBSCAN-model which
+                           is used to extract the topics from
+        """
+        self.base_topics = np.array(sorted(list(set(hdbscan_model.labels_))))
+        topics = self.base_topics.copy().reshape(-1, 1)
+        self.mappings = np.hstack([topics.copy(), topics.copy()]).tolist()
+
+    def get_mappings(self, original_topics: bool = True) -> Mapping[int, int]:
+        """ Get mappings from either the original topics or
+        the second-most recent topics to the current topics
+
+        Args:
+            original_topics: Whether we want to map from the
+                             original topics to the most recent topics
+                             or from the second-most recent topics.
+
+        Returns:
+            mappings: The mappings from old topics to new topics
+
+        Usage:
+
+        To get mappings, simply call:
+        ```python
+        mapper = TopicMapper(hdbscan_model)
+        mappings = mapper.get_mappings(original_topics=False)
+        ```
+        """
+        if original_topics:
+            mappings = np.array(self.mappings)[:, [0, -1]]
+            mappings = dict(zip(mappings[:, 0], mappings[:, 1]))
+        else:
+            mappings = np.array(self.mappings)[:, [-3, -1]]
+            mappings = dict(zip(mappings[:, 0], mappings[:, 1]))
+        return mappings
+
+    def add_mappings(self, mappings: Mapping[int, int]):
+        """ Add new column(s) of topic mappings
+
+        Args:
+            mappings: The mappings to add
+        """
+        for topics in self.mappings:
+            topic = topics[-1]
+            if topic in mappings:
+                topics.append(mappings[topic])
+            else:
+                topics.append(-1)

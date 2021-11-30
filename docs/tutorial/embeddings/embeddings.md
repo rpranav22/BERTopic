@@ -1,5 +1,7 @@
 # Embedding Models
-In this tutorial we will be going through the embedding models that can be used in BERTopic. Having the option to choose embedding models allow you to leverage pre-trained embeddings that suit your use-case. Moreover, it helps creating a topic when you have little data to your availability.
+In this tutorial, we will be going through the embedding models that can be used in BERTopic. 
+Having the option to choose embedding models allows you to leverage pre-trained embeddings that suit your use case. 
+Moreover, it helps to create a topic when you have little data available.
 
 ### **Sentence Transformers**
 You can select any model from sentence-transformers [here](https://www.sbert.net/docs/pretrained_models.html) 
@@ -7,15 +9,15 @@ and pass it through BERTopic with `embedding_model`:
 
 ```python
 from bertopic import BERTopic
-topic_model = BERTopic(embedding_model="xlm-r-bert-base-nli-stsb-mean-tokens")
+topic_model = BERTopic(embedding_model="all-MiniLM-L6-v2")
 ```
 
-Or select a SentenceTransformer model with your own parameters:
+Or select a SentenceTransformer model with your parameters:
 
 ```python
 from sentence_transformers import SentenceTransformer
 
-sentence_model = SentenceTransformer("distilbert-base-nli-mean-tokens", device="cuda")
+sentence_model = SentenceTransformer("all-MiniLM-L6-v2")
 topic_model = BERTopic(embedding_model=sentence_model)
 ```
 
@@ -49,9 +51,6 @@ topic_model = BERTopic(embedding_model=document_glove_embeddings)
 [Spacy](https://github.com/explosion/spaCy) is an amazing framework for processing text. There are 
 many models available across many languages for modeling text. 
  
- allows you to choose almost any embedding model that 
-is publicly available. Flair can be used as follows:
-
 To use Spacy's non-transformer models in BERTopic:
 
 ```python
@@ -87,9 +86,9 @@ topic_model = BERTopic(embedding_model=nlp)
 ```
 
 ### **Universal Sentence Encoder (USE)**
-The Universal Sentence Encoder encodes text into high dimensional vectors that are used here 
+The Universal Sentence Encoder encodes text into high-dimensional vectors that are used here 
 for embedding the documents. The model is trained and optimized for greater-than-word length text, 
-such as sentences, phrases or short paragraphs.
+such as sentences, phrases, or short paragraphs.
 
 Using USE in BERTopic is rather straightforward:
 
@@ -133,16 +132,16 @@ from sentence_transformers import SentenceTransformer
 ft = api.load('fasttext-wiki-news-subwords-300')
 
 # Document embedding model
-distilbert = SentenceTransformer("distilbert-base-nli-stsb-mean-tokens")
+embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
 # Create a model that uses both language models and pass it through BERTopic
-word_doc_embedder = WordDocEmbedder(embedding_model=distilbert, word_embedding_model=ft)
+word_doc_embedder = WordDocEmbedder(embedding_model=embedding_model, word_embedding_model=ft)
 topic_model = BERTopic(embedding_model=word_doc_embedder)
 ```
 
 ### **Custom Backend**
 If your backend or model cannot be found in the ones currently available, you can use the `bertopic.backend.BaseEmbedder` class to 
-create your own backend. Below, you will find an example of creating a SentenceTransformer backend for BERTopic:
+create your backend. Below, you will find an example of creating a SentenceTransformer backend for BERTopic:
 
 ```python
 from bertopic.backend import BaseEmbedder
@@ -158,8 +157,8 @@ class CustomEmbedder(BaseEmbedder):
         return embeddings 
 
 # Create custom backend
-distilbert = SentenceTransformer("distilbert-base-nli-stsb-mean-tokens")
-custom_embedder = CustomEmbedder(embedding_model=distilbert)
+embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+custom_embedder = CustomEmbedder(embedding_model=embedding_model)
 
 # Pass custom backend to bertopic
 topic_model = BERTopic(embedding_model=custom_embedder)
@@ -168,7 +167,7 @@ topic_model = BERTopic(embedding_model=custom_embedder)
 ### **Custom Embeddings**
 The base models in BERTopic are BERT-based models that work well with document similarity tasks. Your documents, 
 however, might be too specific for a general pre-trained model to be used. Fortunately, you can use embedding 
-model in BERTopic in order to create document features.   
+model in BERTopic to create document features.   
 
 You only need to prepare the document embeddings yourself and pass them through `fit_transform` of BERTopic:
 ```python
@@ -177,12 +176,12 @@ from sentence_transformers import SentenceTransformer
 
 # Prepare embeddings
 docs = fetch_20newsgroups(subset='all',  remove=('headers', 'footers', 'quotes'))['data']
-sentence_model = SentenceTransformer("distilbert-base-nli-mean-tokens")
+sentence_model = SentenceTransformer("all-MiniLM-L6-v2")
 embeddings = sentence_model.encode(docs, show_progress_bar=False)
 
 # Create topic model and use the custom embeddings
 topic_model = BERTopic()
-topics, _ = topic_model.fit_transform(docs, embeddings)
+topics, probs = topic_model.fit_transform(docs, embeddings)
 ```
 
 As you can see above, we used a SentenceTransformer model to create the embedding. You could also have used 
@@ -206,11 +205,11 @@ embeddings = vectorizer.fit_transform(docs)
 
 # 
 topic_model = BERTopic(stop_words="english")
-topics, _ = topic_model.fit_transform(docs, embeddings)
+topics, probs = topic_model.fit_transform(docs, embeddings)
 ```
 
 Here, you will probably notice that creating the embeddings is quite fast whereas `fit_transform` is quite slow. 
-This is to be expected as reducing dimensionality of a large sparse matrix takes some time. The inverse of using 
+This is to be expected as reducing the dimensionality of a large sparse matrix takes some time. The inverse of using 
 transformer embeddings is true: creating the embeddings is slow whereas `fit_transform` is quite fast. 
 
 You can play around with different models until you find the best suiting model for you.   

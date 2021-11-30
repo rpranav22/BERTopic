@@ -10,8 +10,12 @@
 <img src="images/logo.png" width="35%" height="35%" align="right" />
 
 BERTopic is a topic modeling technique that leverages 🤗 transformers and c-TF-IDF to create dense clusters
-allowing for easily interpretable topics whilst keeping important words in the topic descriptions. It even supports 
-visualizations similar to LDAvis! 
+allowing for easily interpretable topics whilst keeping important words in the topic descriptions.
+
+BERTopic supports 
+[**guided**](https://maartengr.github.io/BERTopic/tutorial/guided/guided.html), 
+(semi-) [**supervised**](https://maartengr.github.io/BERTopic/tutorial/supervised/supervised.html), 
+and [**dynamic**](https://maartengr.github.io/BERTopic/tutorial/topicsovertime/topicsovertime.html) topic modeling. It even supports visualizations similar to LDAvis!
 
 Corresponding medium posts can be found [here](https://towardsdatascience.com/topic-modeling-with-bert-779f7db187e6?source=friends_link&sk=0b5a470c006d1842ad4c8a3057063a99) 
 and [here](https://towardsdatascience.com/interactive-topic-modeling-with-bertopic-1ea55e7d73d8?sk=03c2168e9e74b6bda2a1f3ed953427e4).
@@ -34,13 +38,6 @@ pip install bertopic[spacy]
 pip install bertopic[use]
 ```
 
-To install all backends:
-
-```bash
-pip install bertopic[all]
-```
-
-
 ## Getting Started
 For an in-depth overview of the features of BERTopic 
 you can check the full documentation [here](https://maartengr.github.io/BERTopic/) or you can follow along 
@@ -53,7 +50,7 @@ with one of the examples below:
 | Advanced Customization in BERTopic  |  [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1ClTYut039t-LDtlcd-oQAdXWgcsSGTw9?usp=sharing) |
 | (semi-)Supervised Topic Modeling with BERTopic  |  [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1bxizKzv5vfxJEB29sntU__ZC7PBSIPaQ?usp=sharing)  |
 | Dynamic Topic Modeling with Trump's Tweets  | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1un8ooI-7ZNlRoK0maVkYhmNRl0XGK88f?usp=sharing)  |
-
+| Topic Modeling arXiv Abstracts | [![Kaggle](https://img.shields.io/static/v1?style=for-the-badge&message=Kaggle&color=222222&logo=Kaggle&logoColor=20BEFF&label=)](https://www.kaggle.com/maartengr/topic-modeling-arxiv-abstract-with-bertopic) |
 
 
 ## Quick Start
@@ -66,7 +63,7 @@ from sklearn.datasets import fetch_20newsgroups
 docs = fetch_20newsgroups(subset='all',  remove=('headers', 'footers', 'quotes'))['data']
 
 topic_model = BERTopic()
-topics, _ = topic_model.fit_transform(docs)
+topics, probs = topic_model.fit_transform(docs)
 ```
 
 After generating topics, we can access the frequent topics that were generated:
@@ -76,17 +73,17 @@ After generating topics, we can access the frequent topics that were generated:
 
 Topic	Count	Name
 -1	4630	-1_can_your_will_any
-49	693	49_windows_drive_dos_file
-32	466	32_jesus_bible_christian_faith
+0	693	49_windows_drive_dos_file
+1	466	32_jesus_bible_christian_faith
 2	441	2_space_launch_orbit_lunar
-22	381	22_key_encryption_keys_encrypted
+3	381	22_key_encryption_keys_encrypted
 ```
 
 -1 refers to all outliers and should typically be ignored. Next, let's take a look at the most 
-frequent topic that was generated, topic 49:
+frequent topic that was generated, topic 0:
 
 ```python
->>> topic_model.get_topic(49)
+>>> topic_model.get_topic(0)
 
 [('windows', 0.006152228076250982),
  ('drive', 0.004982897610645755),
@@ -103,8 +100,8 @@ frequent topic that was generated, topic 49:
 **NOTE**: Use `BERTopic(language="multilingual")` to select a model that supports 50+ languages. 
 
 ## Visualize Topics
-After having trained our BERTopic model, we can iteratively go through perhaps a hundred topic to get a good 
-understanding of the topics that were extract. However, that takes quite some time and lacks a global representation. 
+After having trained our BERTopic model, we can iteratively go through hundreds of topics to get a good 
+understanding of the topics that were extracted. However, that takes quite some time and lacks a global representation. 
 Instead, we can visualize the topics that were generated in a way very similar to 
 [LDAvis](https://github.com/cpsievert/LDAvis):
 
@@ -114,6 +111,19 @@ topic_model.visualize_topics()
 
 <img src="images/topic_visualization.gif" width="60%" height="60%" align="center" />
 
+We can create an overview of the most frequent topics in a way that they are easily interpretable. 
+Horizontal barcharts typically convey information rather well and allow for an intuitive representation 
+of the topics: 
+
+```python
+topic_model.visualize_barchart()
+``` 
+
+<img src="images/topics.png" width="70%" height="70%" align="center" />
+
+
+Find all possible visualizations with interactive examples in the documentation 
+[here](https://maartengr.github.io/BERTopic/tutorial/visualization/visualization.html). 
 
 ## Embedding Models
 BERTopic supports many embedding models that can be used to embed the documents and words:
@@ -123,29 +133,16 @@ BERTopic supports many embedding models that can be used to embed the documents 
 * Gensim
 * USE
 
-Click [here](https://maartengr.github.io/BERTopic/tutorial/embeddings/embeddings.html) 
-for a full overview of all supported embedding models. 
-
-### Sentence-Transformers  
-You can select any model from sentence-transformers [here](https://www.sbert.net/docs/pretrained_models.html) 
-and pass it to BERTopic:
+[**Sentence-Transformers**](https://github.com/UKPLab/sentence-transformers) is typically used as it has shown great results embedding documents 
+meant for semantic similarity. Simply select any from their documentation 
+[here](https://www.sbert.net/docs/pretrained_models.html) and pass it to BERTopic:
 
 ```python
-topic_model = BERTopic(embedding_model="xlm-r-bert-base-nli-stsb-mean-tokens")
+topic_model = BERTopic(embedding_model="all-MiniLM-L6-v2")
 ```
 
-Or select a SentenceTransformer model with your own parameters:
-
-```python
-from sentence_transformers import SentenceTransformer
-
-sentence_model = SentenceTransformer("distilbert-base-nli-mean-tokens", device="cpu")
-topic_model = BERTopic(embedding_model=sentence_model)
-```
-
-### Flair  
-[Flair](https://github.com/flairNLP/flair) allows you to choose almost any embedding model that 
-is publicly available. Flair can be used as follows:
+[**Flair**](https://github.com/flairNLP/flair) allows you to choose almost any 🤗 transformers model. Simply 
+select any from [here](https://huggingface.co/models) and pass it to BERTopic:
 
 ```python
 from flair.embeddings import TransformerDocumentEmbeddings
@@ -154,20 +151,13 @@ roberta = TransformerDocumentEmbeddings('roberta-base')
 topic_model = BERTopic(embedding_model=roberta)
 ```
 
-You can select any 🤗 transformers model [here](https://huggingface.co/models).
-
-**Custom Embeddings**    
-You can also use previously generated embeddings by passing it to `fit_transform()`:
-
-```python
-topic_model = BERTopic()
-topics, _ = topic_model.fit_transform(docs, embeddings)
-```
+Click [here](https://maartengr.github.io/BERTopic/tutorial/embeddings/embeddings.html) 
+for a full overview of all supported embedding models. 
 
 ## Dynamic Topic Modeling
 Dynamic topic modeling (DTM) is a collection of techniques aimed at analyzing the evolution of topics 
-over time. These methods allow you to understand how a topic is represented across different times. 
-Here, we will be using all of Donald Trump's tweet so see how he talked over certain topics over time: 
+over time. These methods allow you to understand how a topic is represented over time. 
+Here, we will be using all of Donald Trump's tweet to see how he talked over certain topics over time: 
 
 ```python
 import re
@@ -186,48 +176,58 @@ Then, we need to extract the global topic representations by simply creating and
 
 ```python
 topic_model = BERTopic(verbose=True)
-topics, _ = topic_model.fit_transform(tweets)
+topics, probs = topic_model.fit_transform(tweets)
 ```
 
 From these topics, we are going to generate the topic representations at each timestamp for each topic. We do this 
 by simply calling `topics_over_time` and pass in his tweets, the corresponding timestamps, and the related topics:
 
 ```python
-topics_over_time = topic_model.topics_over_time(tweets, topics, timestamps)
+topics_over_time = topic_model.topics_over_time(tweets, topics, timestamps, nr_bins=20)
 ```
 
 Finally, we can visualize the topics by simply calling `visualize_topics_over_time()`: 
 
 ```python
-topic_model.visualize_topics_over_time(topics_over_time, top_n=6)
+topic_model.visualize_topics_over_time(topics_over_time, top_n_topics=6)
 ```
 
 <img src="images/dtm.gif" width="80%" height="80%" align="center" />
 
 ## Overview
-For quick access to common function, here is an overview of BERTopic's main methods:
+For quick access to common functions, here is an overview of BERTopic's main methods:
 
 | Method | Code  | 
 |-----------------------|---|
-| Fit the model    |  `BERTopic().fit(docs)` |
-| Fit the model and predict documents    |  `BERTopic().fit_transform(docs)` |
-| Predict new documents    |  `BERTopic().transform([new_doc])` |
-| Access single topic   | `BERTopic().get_topic(topic=12)`  |   
-| Access all topics     |  `BERTopic().get_topics()` |
-| Get topic freq    |  `BERTopic().get_topic_freq()` |
-| Get all topic information|  `BERTopic().get_topic_info()` |
-| Get topics per class | `BERTopic().topics_per_class(docs, topics, classes)` |
-| Dynamic Topic Modeling | `BERTopic().topics_over_time(docs, topics, timestamps)` |
-| Visualize Topics    |  `BERTopic().visualize_topics()` |
-| Visualize Topic Probability Distribution    |  `BERTopic().visualize_distribution(probs[0])` |
-| Visualize Topics over Time   |  `BERTopic().visualize_topics_over_time(topics_over_time)` |
-| Visualize Topics per Class | `BERTopic().visualize_topics_per_class(topics_per_class)` | 
-| Update topic representation | `BERTopic().update_topics(docs, topics, n_gram_range=(1, 3))` |
-| Reduce nr of topics | `BERTopic().reduce_topics(docs, topics, nr_topics=30)` |
-| Find topics | `BERTopic().find_topics("vehicle")` |
-| Save model    |  `BERTopic().save("my_model")` |
+| Fit the model    |  `.fit(docs)` |
+| Fit the model and predict documents  |  `.fit_transform(docs)` |
+| Predict new documents    |  `.transform([new_doc])` |
+| Access single topic   | `.get_topic(topic=12)`  |   
+| Access all topics     |  `.get_topics()` |
+| Get topic freq    |  `.get_topic_freq()` |
+| Get all topic information|  `.get_topic_info()` |
+| Get representative docs per topic |  `.get_representative_docs()` |
+| Get topics per class | `.topics_per_class(docs, topics, classes)` |
+| Dynamic Topic Modeling | `.topics_over_time(docs, topics, timestamps)` |
+| Update topic representation | `.update_topics(docs, topics, n_gram_range=(1, 3))` |
+| Reduce nr of topics | `.reduce_topics(docs, topics, nr_topics=30)` |
+| Find topics | `.find_topics("vehicle")` |
+| Save model    |  `.save("my_model")` |
 | Load model    |  `BERTopic.load("my_model")` |
-| Get parameters |  `BERTopic().get_params()` |
+| Get parameters |  `.get_params()` |
+
+For an overview of BERTopic's visualization methods:
+
+| Method | Code  | 
+|-----------------------|---|
+| Visualize Topics    |  `.visualize_topics()` |
+| Visualize Topic Hierarchy    |  `.visualize_hierarchy()` |
+| Visualize Topic Terms    |  `.visualize_barchart()` |
+| Visualize Topic Similarity  |  `.visualize_heatmap()` |
+| Visualize Term Score Decline  |  `.visualize_term_rank()` |
+| Visualize Topic Probability Distribution    |  `.visualize_distribution(probs[0])` |
+| Visualize Topics over Time   |  `.visualize_topics_over_time(topics_over_time)` |
+| Visualize Topics per Class | `.visualize_topics_per_class(topics_per_class)` | 
 
 ## Citation
 To cite BERTopic in your work, please use the following bibtex reference:
@@ -238,7 +238,7 @@ To cite BERTopic in your work, please use the following bibtex reference:
   title        = {BERTopic: Leveraging BERT and c-TF-IDF to create easily interpretable topics.},
   year         = 2020,
   publisher    = {Zenodo},
-  version      = {v0.7.0},
+  version      = {v0.9.2},
   doi          = {10.5281/zenodo.4381785},
   url          = {https://doi.org/10.5281/zenodo.4381785}
 }

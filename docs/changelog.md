@@ -1,3 +1,139 @@
+## **Version 0.9.3**
+*Release date:  17 October, 2021*
+
+* Fix [#282](https://github.com/MaartenGr/BERTopic/issues/282)
+    * As it turns out the old implementation of topic mapping was still found in the `transform` function
+* Fix [#285](https://github.com/MaartenGr/BERTopic/issues/285)
+    * Fix getting all representative docs
+* Fix [#288](https://github.com/MaartenGr/BERTopic/issues/288)
+    * A recent issue with the package `pyyaml` that can be found in Google Colab
+
+
+## **Version 0.9.2**
+*Release date:  12 October, 2021*
+
+A release focused on algorithmic optimization and fixing several issues:
+
+**Highlights**:  
+  
+* Update the non-multilingual paraphrase-* models to the all-* models due to improved [performance](https://www.sbert.net/docs/pretrained_models.html)
+* Reduce necessary RAM in c-TF-IDF top 30 word [extraction](https://stackoverflow.com/questions/49207275/finding-the-top-n-values-in-a-row-of-a-scipy-sparse-matrix)
+
+**Fixes**:  
+
+* Fix topic mapping
+    * When reducing the number of topics, these need to be mapped to the correct input/output which had some issues in the previous version
+    * A new class was created as a way to track these mappings regardless of how many times they were executed
+    * In other words, you can iteratively reduce the number of topics after training the model without the need to continuously train the model
+* Fix typo in embeddings page ([#200](https://github.com/MaartenGr/BERTopic/issues/200)) 
+* Fix link in README ([#233](https://github.com/MaartenGr/BERTopic/issues/233))
+* Fix documentation `.visualize_term_rank()` ([#253](https://github.com/MaartenGr/BERTopic/issues/253)) 
+* Fix getting correct representative docs ([#258](https://github.com/MaartenGr/BERTopic/issues/258))
+* Update [memory FAQ](https://maartengr.github.io/BERTopic/faq.html#i-am-facing-memory-issues-help) with [HDBSCAN pr](https://github.com/MaartenGr/BERTopic/issues/151)
+
+## **Version 0.9.1**
+*Release date:  1 September, 2021*
+
+A release focused on fixing several issues:
+
+**Fixes**:  
+
+* Fix TypeError when auto-reducing topics ([#210](https://github.com/MaartenGr/BERTopic/issues/210)) 
+* Fix mapping representative docs when reducing topics ([#208](https://github.com/MaartenGr/BERTopic/issues/208))
+* Fix visualization issues with probabilities ([#205](https://github.com/MaartenGr/BERTopic/issues/205))
+* Fix missing `normalize_frequency` param in plots ([#213](https://github.com/MaartenGr/BERTopic/issues/208))
+  
+
+## **Version 0.9**
+*Release date:  9 August, 2021*
+
+**Highlights**:  
+
+* Implemented a [**Guided BERTopic**](https://maartengr.github.io/BERTopic/tutorial/guided/guided.html) -> Use seeds to steer the Topic Modeling
+* Get the most representative documents per topic: `topic_model.get_representative_docs(topic=1)`
+    * This allows users to see which documents are good representations of a topic and better understand the topics that were created
+* Added `normalize_frequency` parameter to `visualize_topics_per_class` and `visualize_topics_over_time` in order to better compare the relative topic frequencies between topics
+* Return flat probabilities as default, only calculate the probabilities of all topics per document if `calculate_probabilities` is True
+* Added several FAQs
+
+**Fixes**:  
+
+* Fix loading pre-trained BERTopic model
+* Fix mapping of probabilities
+* Fix [#190](https://github.com/MaartenGr/BERTopic/issues/190)
+
+
+**Guided BERTopic**:    
+
+Guided BERTopic works in two ways: 
+
+First, we create embeddings for each seeded topics by joining them and passing them through the document embedder. 
+These embeddings will be compared with the existing document embeddings through cosine similarity and assigned a label. 
+If the document is most similar to a seeded topic, then it will get that topic's label. 
+If it is most similar to the average document embedding, it will get the -1 label. 
+These labels are then passed through UMAP to create a semi-supervised approach that should nudge the topic creation to the seeded topics. 
+
+Second, we take all words in `seed_topic_list` and assign them a multiplier larger than 1. 
+Those multipliers will be used to increase the IDF values of the words across all topics thereby increasing 
+the likelihood that a seeded topic word will appear in a topic. This does, however, also increase the chance of an 
+irrelevant topic having unrelated words. In practice, this should not be an issue since the IDF value is likely to 
+remain low regardless of the multiplier. The multiplier is now a fixed value but may change to something more elegant, 
+like taking the distribution of IDF values and its position into account when defining the multiplier. 
+
+```python
+seed_topic_list = [["company", "billion", "quarter", "shrs", "earnings"],
+                   ["acquisition", "procurement", "merge"],
+                   ["exchange", "currency", "trading", "rate", "euro"],
+                   ["grain", "wheat", "corn"],
+                   ["coffee", "cocoa"],
+                   ["natural", "gas", "oil", "fuel", "products", "petrol"]]
+
+topic_model = BERTopic(seed_topic_list=seed_topic_list)
+topics, probs = topic_model.fit_transform(docs)
+```
+
+
+## **Version 0.8.1**
+*Release date:  8 June, 2021*
+
+**Highlights**:  
+
+* Improved models:
+    * For English documents the default is now: `"paraphrase-MiniLM-L6-v2"` 
+    * For Non-English or multi-lingual documents the default is now: `"paraphrase-multilingual-MiniLM-L12-v2"` 
+    * Both models show not only great performance but are much faster!  
+* Add interactive visualizations to the `plotting` API documentation
+  
+For better performance, please use the following models:  
+
+* English: `"paraphrase-mpnet-base-v2"`
+* Non-English or multi-lingual: `"paraphrase-multilingual-mpnet-base-v2"`
+
+**Fixes**:   
+
+* Improved unit testing for more stability
+* Set transformers version for Flair
+
+## **Version 0.8.0**
+*Release date:  31 May, 2021*
+
+**Highlights**:  
+
+* Additional visualizations:
+    * Topic Hierarchy: `topic_model.visualize_hierarchy()` 
+    * Topic Similarity Heatmap: `topic_model.visualize_heatmap()` 
+    * Topic Representation Barchart: `topic_model.visualize_barchart()` 
+    * Term Score Decline: `topic_model.visualize_term_rank()` 
+* Created `bertopic.plotting` library to easily extend visualizations
+* Improved automatic topic reduction by using HDBSCAN to detect similar topics
+* Sort topic ids by their frequency. -1 is the outlier class and contains typically the most documents. After that 0 is the largest  topic, 1 the second largest, etc. 
+     
+**Fixes**:   
+
+* Fix typo [#113](https://github.com/MaartenGr/BERTopic/pull/113), [#117](https://github.com/MaartenGr/BERTopic/pull/117)
+* Fix [#121](https://github.com/MaartenGr/BERTopic/issues/121) by removing [these](https://github.com/MaartenGr/BERTopic/blob/5c6cf22776fafaaff728370781a5d33727d3dc8f/bertopic/_bertopic.py#L359-L360) two lines
+* Fix mapping of topics after reduction (it now excludes 0) ([#103](https://github.com/MaartenGr/BERTopic/issues/103))
+  
 ## **Version 0.7.0**
 *Release date:  26 April, 2021*  
 
