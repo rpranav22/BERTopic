@@ -367,10 +367,12 @@ class BERTopic:
         # print("shape: ", denom.shape)
 
         coherence = []
+        print(self.get_topics())
         for t in self.get_topics():
             c = 0
             for m in range(1, M-1):
                 for l in range(0, m):
+                    print(self.get_topic(t)[l][0])
                     # denom = self._get_doc_freq(doc_org, topic_to_docs[t], self.get_topic(t)[l][0])
                     denom = np.squeeze(np.asarray(X.sum(axis=0)))[words.index(self.get_topic(t)[l][0])]
                     if denom != 0:
