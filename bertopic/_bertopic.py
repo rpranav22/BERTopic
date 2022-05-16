@@ -1460,7 +1460,7 @@ class BERTopic:
         """
         self.hdbscan_model.fit(umap_embeddings)
         documents['Topic'] = self.hdbscan_model.labels_
-        probabilities = self.hdbscan_model.probabilities_
+        probabilities = 1 #self.hdbscan_model.probabilities_
 
         if self.calculate_probabilities:
             probabilities = hdbscan.all_points_membership_vectors(self.hdbscan_model)
