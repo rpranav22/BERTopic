@@ -1466,7 +1466,7 @@ class BERTopic:
             probabilities = hdbscan.all_points_membership_vectors(self.hdbscan_model)
 
         self._update_topic_size(documents)
-        self._save_representative_docs(documents)
+#         self._save_representative_docs(documents)
         self.topic_mapper = TopicMapper(self.hdbscan_model)
         logger.info("Clustered UMAP embeddings with HDBSCAN")
         return documents, probabilities
