@@ -379,7 +379,7 @@ class BERTopic:
                     else:
                         c += - math.inf
                         raise Exception("Top word was not found in any document.")
-            coherence.append(c)
+            coherence.append(c/M)
         return predictions, probabilities, coherence
 
     def transform(self,
