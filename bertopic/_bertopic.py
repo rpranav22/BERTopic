@@ -331,7 +331,7 @@ class BERTopic:
         if self.nr_topics:
             documents = self._reduce_topics(documents)
 
-        self._map_representative_docs(original_topics=True)
+#         self._map_representative_docs(original_topics=True)
         probabilities = self._map_probabilities(probabilities, original_topics=True)
         predictions = documents.Topic.to_list()
 
@@ -934,7 +934,7 @@ class BERTopic:
         # Reduce number of topics
         documents = self._reduce_topics(documents)
         self.merged_topics = None
-        self._map_representative_docs()
+#         self._map_representative_docs()
 
         # Extract topics and map probabilities
         new_topics = documents.Topic.to_list()
