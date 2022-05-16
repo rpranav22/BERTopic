@@ -374,7 +374,10 @@ class BERTopic:
                 for l in range(0, m):
                     print(self.get_topic(t)[l][0])
                     # denom = self._get_doc_freq(doc_org, topic_to_docs[t], self.get_topic(t)[l][0])
-                    denom = np.squeeze(np.asarray(X.sum(axis=0)))[words.index(self.get_topic(t)[l][0])]
+                    if self.get_topic(t)[l][0]:
+                        denom = np.squeeze(np.asarray(X.sum(axis=0)))[words.index(self.get_topic(t)[l][0])]
+                    else:
+                        continue
                     if denom != 0:
                         numer = self._get_doc_freq(documents_per_topic_l[t], self.get_topic(t)[l][0], self.get_topic(t)[m][0])
                         c += math.log((numer + 1) / denom)
